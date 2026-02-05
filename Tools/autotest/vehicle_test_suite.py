@@ -2999,12 +2999,7 @@ class TestSuite(abc.ABC):
 
     def LoggerDocumentation(self):
         '''Test Onboard Logging Generation'''
-        xml_filepath = os.path.join(self.buildlogs_dirpath(), "LogMessages.xml")
-        parse_filepath = os.path.join(self.rootdir(), 'Tools', 'autotest', 'logger_metadata', 'parse.py')
-        try:
-            os.unlink(xml_filepath)
-        except OSError:
-            pass
+        validate_filepath = os.path.join(self.rootdir(), 'Tools', 'autotest', 'logger_metadata', 'validate.py')
         vehicle = self.log_name()
         if vehicle == 'BalanceBot':
             # same binary and parameters as Rover
@@ -3020,99 +3015,10 @@ class TestSuite(abc.ABC):
         }
         vehicle = vehicle_map[vehicle]
 
-        cmd = [parse_filepath, '--vehicle', vehicle]
+        cmd = ['python3', validate_filepath, '--vehicle', vehicle, '--output-dir', self.buildlogs_dirpath()]
 #        cmd.append("--verbose")
-        if util.run_cmd(cmd, directory=self.buildlogs_dirpath()) != 0:
-            self.progress("Failed parse.py (%s)" % vehicle)
-            return False
-        length = os.path.getsize(xml_filepath)
-        min_length = 1024
-        if length < min_length:
-            raise NotAchievedException("short xml file (%u < %u)" %
-                                       (length, min_length))
-        self.progress("xml file length is %u" % length)
-
-        from lxml import objectify
-        xml = open(xml_filepath, 'rb').read()
-        objectify.enable_recursive_str()
-        tree = objectify.fromstring(xml)
-
-        whitelist = self.LoggerDocumentation_whitelist()
-
-        docco_ids = {}
-        for thing in tree.logformat:
-            name = str(thing.get("name"))
-            docco_ids[name] = {
-                "name": name,
-                "labels": [],
-            }
-            if getattr(thing.fields, 'field', None) is None:
-                if name in whitelist:
-                    continue
-                raise NotAchievedException("no doc fields for %s" % name)
-            for field in thing.fields.field:
-                # print("field: (%s)" % str(field))
-                fieldname = field.get("name")
-#                print("Got (%s.%s)" % (name,str(fieldname)))
-                docco_ids[name]["labels"].append(fieldname)
-
-        code_ids = self.all_log_format_ids()
-        # self.progress("Code ids: (%s)" % str(sorted(code_ids.keys())))
-        # self.progress("Docco ids: (%s)" % str(sorted(docco_ids.keys())))
-
-        undocumented = set()
-        overdocumented = set()
-        for name in sorted(code_ids.keys()):
-            if name not in docco_ids:
-                if name not in whitelist:
-                    undocumented.add(name)
-                continue
-            if name in whitelist:
-                overdocumented.add(name)
-            seen_labels = {}
-            for label in code_ids[name]["labels"].split(","):
-                if label in seen_labels:
-                    raise NotAchievedException("%s.%s is duplicate label" %
-                                               (name, label))
-                seen_labels[label] = True
-                if label not in docco_ids[name]["labels"]:
-                    msg = ("%s.%s not in documented fields (have (%s))" %
-                           (name, label, ",".join(docco_ids[name]["labels"])))
-                    if name in whitelist:
-                        self.progress(msg)
-                        # a lot of our Replay messages have names but
-                        # nothing more
-                        try:
-                            overdocumented.remove(name)
-                        except KeyError:
-                            pass
-                        continue
-                    raise NotAchievedException(msg)
-
-        if len(undocumented):
-            for name in sorted(undocumented):
-                self.progress(f"Undocumented message: {name}")
-            raise NotAchievedException("Undocumented messages found")
-        if len(overdocumented):
-            for name in sorted(overdocumented):
-                self.progress(f"Message documented when it shouldn't be: {name}")
-            raise NotAchievedException("Overdocumented messages found")
-
-        missing = []
-        for name in sorted(docco_ids):
-            if name not in code_ids and name not in whitelist:
-                missing.append(name)
-                continue
-            for label in docco_ids[name]["labels"]:
-                if label not in code_ids[name]["labels"].split(","):
-                    # "name" was found in the XML, so was found in an
-                    # @LoggerMessage markup line, but was *NOT* found
-                    # in our bodgy parsing of the C++ code (in a
-                    # Log_Write call or in the static structures)
-                    raise NotAchievedException("documented field %s.%s not found in code" %
-                                               (name, label))
-        if len(missing) > 0:
-            raise NotAchievedException("Documented messages (%s) not in code" % missing)
+        if util.run_cmd(cmd) != 0:
+            raise NotAchievedException("Failed validate.py (%s)" % vehicle)
 
     def initialise_after_reboot_sitl(self):
 
